@@ -77,6 +77,30 @@ app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
                 answerKeys,
             }
         });
+        // Bot orqali xabar yuborish
+        const BOT_TOKEN = process.env.BOT_TOKEN;
+        if (BOT_TOKEN) {
+            const message = `✅ <b>Yangi test yaratildi!</b>\n\n📋 Test kodi: <b>${newTestCode}</b>\n👤 Yaratuvchi: ${user?.name || 'Noma\'lum'}\n\nBoshqalar ham shu kod orqali testni ishlashi mumkin.`;
+            try {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: parseInt(telegramId),
+                        text: message,
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                    { text: '📱 Test ishlash', web_app: { url: process.env.FRONTEND_URL || 'https://frontend-eta-one-72.vercel.app' } }
+                                ]]
+                        }
+                    })
+                });
+            }
+            catch (err) {
+                console.error('Bot xabar yuborish xatosi:', err);
+            }
+        }
         res.json({ success: true, testCode: newTestCode, authorName: user?.name });
     }
     catch (e) {
@@ -96,7 +120,7 @@ app.get('/api/tests/:testCode', async (req, res) => {
         res.status(400).json({ error: e.message });
     }
 });
-// ✅ Test natijasini saqlash
+// ✅ Test natijasini saqlash (Milliy Sertifikat formatida)
 app.post('/api/tests/:testCode/submit', verifyTelegramInitData, async (req, res) => {
     try {
         const telegramId = req.telegramData.user.id.toString();
@@ -105,25 +129,87 @@ app.post('/api/tests/:testCode/submit', verifyTelegramInitData, async (req, res)
         const test = await prisma.test.findUnique({ where: { testCode } });
         if (!test)
             return res.status(404).json({ error: 'Test topilmadi' });
-        // Ball hisoblash
-        let score = 0;
+        // Milliy Sertifikat baholash modeli
+        // 1-32: A/B/C/D — har biri 1.0 ball
+        // 33-35: A-F — har biri 2.0 ball
+        // 36-45: 2 qismli — har bir qism 2.5 ball (jami 20 ta qism)
+        // Maksimal xom ball: 88.0
         const answerKeys = test.answerKeys;
+        let correctCount = 0;
+        let rawScore = 0;
         for (const [key, value] of Object.entries(answers)) {
-            if (answerKeys[key] && answerKeys[key].toUpperCase() === value.toUpperCase()) {
-                score += 1;
+            const isCorrect = answerKeys[key] && answerKeys[key].toUpperCase() === value.toUpperCase();
+            if (isCorrect) {
+                correctCount++;
+                // Vaznli ball hisoblash
+                const num = parseInt(key.split('.')[0]);
+                if (num >= 1 && num <= 32) {
+                    rawScore += 1.0;
+                }
+                else if (num >= 33 && num <= 35) {
+                    rawScore += 2.0;
+                }
+                else if (num >= 36 && num <= 45) {
+                    rawScore += 2.5;
+                }
             }
         }
-        const total = Object.keys(answerKeys).length;
+        // Standart ball (0-100)
+        const scaledScore = Math.round((rawScore / 88.0) * 100 * 100) / 100;
+        // Foiz
+        const percentage = Math.round((correctCount / 45) * 100 * 10) / 10;
+        // Harfli daraja
+        let grade = 'F';
+        let isCertified = false;
+        if (scaledScore >= 90) {
+            grade = 'A+';
+            isCertified = true;
+        }
+        else if (scaledScore >= 80) {
+            grade = 'A';
+            isCertified = true;
+        }
+        else if (scaledScore >= 70) {
+            grade = 'B+';
+            isCertified = true;
+        }
+        else if (scaledScore >= 60) {
+            grade = 'B';
+            isCertified = true;
+        }
+        else if (scaledScore >= 50) {
+            grade = 'C+';
+        }
+        else if (scaledScore >= 40) {
+            grade = 'C';
+        }
+        else {
+            grade = 'F';
+        }
         const result = await prisma.testResult.create({
             data: {
                 telegramId,
                 testCode,
                 answers,
-                score,
-                total,
+                score: correctCount,
+                total: 45,
+                rawScore,
+                scaledScore,
+                percentage,
+                grade,
+                isCertified,
             }
         });
-        res.json({ success: true, score, total });
+        res.json({
+            success: true,
+            score: correctCount,
+            total: 45,
+            rawScore: Math.round(rawScore * 100) / 100,
+            scaledScore,
+            percentage,
+            grade,
+            isCertified,
+        });
     }
     catch (e) {
         res.status(400).json({ error: e.message });
