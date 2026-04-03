@@ -1,0 +1,1 @@
+{"version":3,"file":"telegramAuth.d.ts","sourceRoot":"","sources":["../../src/middleware/telegramAuth.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,OAAO,EAAE,QAAQ,EAAE,YAAY,EAAE,MAAM,SAAS,CAAC;AAG1D,eAAO,MAAM,sBAAsB,GAAI,KAAK,OAAO,EAAE,KAAK,QAAQ,EAAE,MAAM,YAAY,mDA+BrF,CAAC"}

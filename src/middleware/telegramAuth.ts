@@ -15,7 +15,7 @@ export const verifyTelegramInitData = (req: Request, res: Response, next: NextFu
       .sort()
       .join('\n');
 
-    const BOT_TOKEN = process.env.BOT_TOKEN;
+    const BOT_TOKEN = process.env.BOT_TOKEN || '';
     const secretKey = createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
     const computedHash = createHmac('sha256', secretKey).update(sortedParams).digest('hex');
 
