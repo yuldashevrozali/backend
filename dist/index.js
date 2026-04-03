@@ -7,7 +7,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 export const prisma = new PrismaClient();
 const app = express();
-app.use(cors());
+// ✅ CORS — barcha origin'larga ruxsat
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-tg-auth', 'Authorization'],
+}));
+// ✅ OPTIONS preflight request'larni qabul qilish
+app.options('*', cors());
 app.use(express.json());
 // ✅ Ro'yxatdan o'tish
 app.post('/api/auth/register', verifyTelegramInitData, async (req, res) => {
