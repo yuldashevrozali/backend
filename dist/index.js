@@ -20,11 +20,11 @@ app.use(express.json());
 app.post('/api/auth/register', verifyTelegramInitData, async (req, res) => {
     try {
         const { name, surname, phone, region, district } = req.body;
-        const userId = req.telegramData.user.id.toString();
+        const telegramId = req.telegramData.user.id.toString();
         const user = await prisma.user.upsert({
-            where: { id: userId },
+            where: { telegramId },
             update: { name, surname, phone, region, district },
-            create: { id: userId, name, surname, phone, region, district },
+            create: { telegramId, name, surname, phone, region, district },
         });
         res.json({ success: true, user });
     }
@@ -35,8 +35,8 @@ app.post('/api/auth/register', verifyTelegramInitData, async (req, res) => {
 // ✅ Foydalanuvchi ma'lumotlarini olish
 app.get('/api/me', verifyTelegramInitData, async (req, res) => {
     try {
-        const userId = req.telegramData.user.id.toString();
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const telegramId = req.telegramData.user.id.toString();
+        const user = await prisma.user.findUnique({ where: { telegramId } });
         if (!user)
             return res.status(404).json({ error: 'User topilmadi' });
         res.json(user);
@@ -57,10 +57,10 @@ app.get('/api/tests', async (req, res) => {
 });
 // ✅ Tekshiruv boshlash
 app.post('/api/tests/:testId/start', verifyTelegramInitData, async (req, res) => {
-    const userId = req.telegramData.user.id.toString();
+    const telegramId = req.telegramData.user.id.toString();
     const testId = req.params.testId;
     const attempt = await prisma.attempt.create({
-        data: { userId, testId, theta: 0, answers: {} }
+        data: { telegramId, testId, theta: 0, answers: {} }
     });
     const question = await prisma.question.findFirst({
         where: { testId },
