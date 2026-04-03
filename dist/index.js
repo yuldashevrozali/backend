@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import { verifyTelegramInitData } from './middleware/telegramAuth.js';
-import { updateTheta, calculateScore, getGrade } from './services/rasch.js';
 import dotenv from 'dotenv';
 dotenv.config();
 export const prisma = new PrismaClient();
@@ -45,16 +44,6 @@ app.get('/api/me', verifyTelegramInitData, async (req, res) => {
         res.status(400).json({ error: e.message });
     }
 });
-// ✅ Testlar ro'yxati
-app.get('/api/tests', async (req, res) => {
-    try {
-        const tests = await prisma.test.findMany();
-        res.json(tests);
-    }
-    catch (e) {
-        res.status(400).json({ error: e.message });
-    }
-});
 // ✅ User ro'yxatdan o'tganini tekshirish (bot uchun)
 app.get('/api/check-user/:telegramId', async (req, res) => {
     try {
@@ -66,65 +55,94 @@ app.get('/api/check-user/:telegramId', async (req, res) => {
         res.status(400).json({ error: e.message });
     }
 });
-// ✅ Tekshiruv boshlash
-app.post('/api/tests/:testId/start', verifyTelegramInitData, async (req, res) => {
-    const telegramId = req.telegramData.user.id.toString();
-    const testId = req.params.testId;
-    const attempt = await prisma.attempt.create({
-        data: { telegramId, testId, theta: 0, answers: {} }
-    });
-    const question = await prisma.question.findFirst({
-        where: { testId },
-        orderBy: { difficulty: 'asc' },
-    });
-    res.json({ attemptId: attempt.id, question });
-});
-// ✅ Javob yuborish & Theta yangilash
-app.post('/api/tests/:testId/answer', verifyTelegramInitData, async (req, res) => {
-    const userId = req.telegramData.user.id.toString();
-    const { attemptId, questionId, selectedOption } = req.body;
-    const question = await prisma.question.findUnique({ where: { id: questionId } });
-    if (!question)
-        return res.status(404).json({ error: 'Savol topilmadi' });
-    const isCorrect = question.correctOption === selectedOption;
-    const attempt = await prisma.attempt.findUnique({ where: { id: attemptId } });
-    if (!attempt)
-        return res.status(404).json({ error: 'Attempt topilmadi' });
-    const newTheta = updateTheta(attempt.theta, isCorrect, question.difficulty);
-    const updatedAnswers = { ...attempt.answers, [questionId]: isCorrect };
-    await prisma.attempt.update({
-        where: { id: attemptId },
-        data: { theta: newTheta, answers: updatedAnswers }
-    });
-    const questionCount = Object.keys(updatedAnswers).length;
-    const isFinished = questionCount >= 20 || Math.abs(newTheta - attempt.theta) < 0.02;
-    let nextQuestion = null;
-    if (!isFinished) {
-        const answeredIds = Object.keys(updatedAnswers);
-        nextQuestion = await prisma.question.findFirst({
-            where: { testId: attempt.testId, NOT: { id: { in: answeredIds } } },
-            orderBy: { difficulty: 'asc' }
+// ✅ Test yaratish
+app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
+    try {
+        const telegramId = req.telegramData.user.id.toString();
+        const { answerKeys } = req.body;
+        if (!answerKeys || typeof answerKeys !== 'object') {
+            return res.status(400).json({ error: 'Javob kalitlari kiritilmagan' });
+        }
+        // Eng oxirgi test kodini olish
+        const lastTest = await prisma.test.findFirst({
+            orderBy: { testCode: 'desc' }
         });
+        const newTestCode = (lastTest?.testCode || 0) + 1;
+        const user = await prisma.user.findUnique({ where: { telegramId } });
+        const test = await prisma.test.create({
+            data: {
+                testCode: newTestCode,
+                title: `Test #${newTestCode}`,
+                telegramId,
+                answerKeys,
+            }
+        });
+        res.json({ success: true, testCode: newTestCode, authorName: user?.name });
     }
-    res.json({
-        isCorrect,
-        newTheta,
-        isFinished,
-        nextQuestion,
-        answersCount: questionCount
-    });
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
 });
-// ✅ Testni tugatish
-app.post('/api/tests/:testId/finish', verifyTelegramInitData, async (req, res) => {
-    const { attemptId } = req.body;
-    const attempt = await prisma.attempt.findUnique({ where: { id: attemptId } });
-    if (!attempt)
-        return res.status(404).json({ error: 'Attempt topilmadi' });
-    const score = calculateScore(attempt.theta);
-    const grade = getGrade(score);
-    await prisma.attempt.update({ where: { id: attemptId }, data: { score, grade } });
-    await prisma.test.update({ where: { id: attempt.testId }, data: { attemptCount: { increment: 1 } } });
-    res.json({ score, grade, theta: attempt.theta });
+// ✅ Test kodini tekshirish
+app.get('/api/tests/:testCode', async (req, res) => {
+    try {
+        const testCode = parseInt(req.params.testCode);
+        const test = await prisma.test.findUnique({ where: { testCode } });
+        if (!test)
+            return res.status(404).json({ error: 'Test topilmadi' });
+        res.json({ success: true, test });
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+// ✅ Test natijasini saqlash
+app.post('/api/tests/:testCode/submit', verifyTelegramInitData, async (req, res) => {
+    try {
+        const telegramId = req.telegramData.user.id.toString();
+        const testCode = parseInt(req.params.testCode);
+        const { answers } = req.body;
+        const test = await prisma.test.findUnique({ where: { testCode } });
+        if (!test)
+            return res.status(404).json({ error: 'Test topilmadi' });
+        // Ball hisoblash
+        let score = 0;
+        const answerKeys = test.answerKeys;
+        for (const [key, value] of Object.entries(answers)) {
+            if (answerKeys[key] && answerKeys[key].toUpperCase() === value.toUpperCase()) {
+                score += 1;
+            }
+        }
+        const total = Object.keys(answerKeys).length;
+        const result = await prisma.testResult.create({
+            data: {
+                telegramId,
+                testCode,
+                answers,
+                score,
+                total,
+            }
+        });
+        res.json({ success: true, score, total });
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+// ✅ Foydalanuvchi natijalari
+app.get('/api/results', verifyTelegramInitData, async (req, res) => {
+    try {
+        const telegramId = req.telegramData.user.id.toString();
+        const results = await prisma.testResult.findMany({
+            where: { telegramId },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+        });
+        res.json(results);
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
 });
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
