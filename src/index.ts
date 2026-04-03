@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
-import { verifyTelegramInitData } from './middleware/telegramAuth.js';
-import { updateTheta, calculateScore, getGrade } from './services/rasch.js';
+import { verifyTelegramInitData } from './middleware/telegramAuth';
+import { updateTheta, calculateScore, getGrade } from './services/rasch';
 import dotenv from 'dotenv';
 
 dotenv.config();

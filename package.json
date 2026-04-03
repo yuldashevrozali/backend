@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "npx tsx src/index.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
