@@ -55,6 +55,17 @@ app.get('/api/tests', async (req, res) => {
         res.status(400).json({ error: e.message });
     }
 });
+// ✅ User ro'yxatdan o'tganini tekshirish (bot uchun)
+app.get('/api/check-user/:telegramId', async (req, res) => {
+    try {
+        const telegramId = req.params.telegramId;
+        const user = await prisma.user.findUnique({ where: { telegramId } });
+        res.json({ registered: !!user });
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
 // ✅ Tekshiruv boshlash
 app.post('/api/tests/:testId/start', verifyTelegramInitData, async (req, res) => {
     const telegramId = req.telegramData.user.id.toString();
