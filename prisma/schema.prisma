@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  surname   String
+  phone     String   @unique
+  region    String
+  district  String
+  createdAt DateTime @default(now())
+  tests     Test[]
+  attempts  Attempt[]
+}
+
+model Test {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  description  String?
+  category     String
+  userId       String   @map("author_id") @db.ObjectId
+  attemptCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  questions    Question[]
+  author       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts     Attempt[]
+
+  @@index([userId])
+}
+
+model Question {
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  testId        String  @map("test_id") @db.ObjectId
+  text          String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctOption String
+  difficulty    Float
+  test          Test    @relation(fields: [testId], references: [id], onDelete: Cascade)
+}
+
+model Attempt {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  testId    String   @db.ObjectId
+  theta     Float    @default(0)
+  score     Float    @default(0)
+  grade     String?
+  answers   Json     @default("{}")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  test      Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@index([userId, testId])
+}
