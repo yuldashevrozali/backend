@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "node node_modules/typescript/bin/tsc",
     "start": "node dist/index.js",
-    "postinstall": "prisma generate"
+    "postinstall": "node node_modules/prisma/bin/index.js generate"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
