@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npx tsx watch src/index.ts",
-    "start": "npx tsx src/index.ts"
-  },
+  "build": "tsc",
+  "start": "node dist/index.js"
+},
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
