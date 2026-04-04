@@ -498,6 +498,46 @@ app.get('/api/admin/stats', async (req, res) => {
         res.status(400).json({ error: e.message });
     }
 });
+// ✅ Test natijalarini ko'rish (admin uchun)
+app.get('/api/admin/test/:testCode/results', async (req, res) => {
+    try {
+        const testCode = parseInt(req.params.testCode);
+        const test = await prisma.test.findUnique({ where: { testCode } });
+        if (!test)
+            return res.status(404).json({ error: 'Test topilmadi' });
+        const results = await prisma.testResult.findMany({
+            where: { testCode },
+            orderBy: { scaledScore: 'desc' }
+        });
+        const telegramIds = results.map(r => r.telegramId);
+        const users = await prisma.user.findMany({
+            where: { telegramId: { in: telegramIds } }
+        });
+        const userMap = {};
+        for (const u of users) {
+            userMap[u.telegramId] = { name: u.name, surname: u.surname };
+        }
+        const finalResults = results.map(r => ({
+            name: userMap[r.telegramId]?.name || 'Noma\'lum',
+            surname: userMap[r.telegramId]?.surname || '',
+            theta: r.theta,
+            score: r.score,
+            total: r.total,
+            scaledScore: r.scaledScore,
+            percentage: r.percentage,
+            grade: r.grade,
+            isCertified: r.isCertified,
+        }));
+        res.json({
+            test: { testCode, title: test.title, status: test.status },
+            participantCount: results.length,
+            results: finalResults,
+        });
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
 // ✅ Admin: Reklama yuborish
 app.post('/api/admin/broadcast', async (req, res) => {
     try {
