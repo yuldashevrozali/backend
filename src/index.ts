@@ -288,7 +288,7 @@ app.post('/api/tests/:testCode/answer', verifyTelegramInitData, async (req, res)
   }
 });
 
-// ✅ Testni yakunlash (faqat yaratuvchi, kamida 5 kishi)
+// ✅ Testni yakunlash (faqat yaratuvchi, kamida 5 kishi, RASCH scoring)
 app.post('/api/tests/:testCode/finalize', async (req, res) => {
   try {
     const { adminTelegramId } = req.body;
@@ -316,30 +316,79 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
       data: { status: 'finished' }
     });
 
-    // Barcha natijalarni hisoblash
+    // Barcha natijalarni olish
     const results = await prisma.testResult.findMany({
       where: { testCode },
       include: { user: true }
     });
 
+    // Barcha savollarni olish
+    const questions = await prisma.question.findMany({ where: { testCode } });
+
+    // RASCH: Har bir savol uchun to'g'ri javob berish foizini hisoblash
+    // Kam topilgan savol = ko'proq ball, ko'p topilgan = kamroq ball
+    const questionStats: Record<string, { total: number; correct: number; difficulty: number }> = {};
+    for (const q of questions) {
+      const key = q.part ? `${q.num}.${q.part}` : String(q.num);
+      questionStats[key] = { total: 0, correct: 0, difficulty: q.difficulty };
+    }
+
+    // Har bir ishtirokchi uchun javoblarni tahlil qilish
+    for (const r of results) {
+      const answers = r.answers as Record<string, any>;
+      for (const [key, val] of Object.entries(answers)) {
+        if (questionStats[key]) {
+          questionStats[key].total++;
+          if ((val as any).correct) {
+            questionStats[key].correct++;
+          }
+        }
+      }
+    }
+
+    // Har bir savol uchun ball hisoblash (RASCH usuli)
+    // p = to'g'ri javob foizi (0-1)
+    // ball = -log(p / (1-p)) — kam topilgan = yuqori ball
+    const questionScores: Record<string, number> = {};
+    for (const [key, stats] of Object.entries(questionStats)) {
+      if (stats.total === 0) {
+        questionScores[key] = 1.0; // default
+        continue;
+      }
+      const p = stats.correct / stats.total;
+      if (p <= 0.05) {
+        questionScores[key] = 3.0; // Juda qiyin — maksimal ball
+      } else if (p >= 0.95) {
+        questionScores[key] = 0.3; // Juda oson — minimal ball
+      } else {
+        // RASCH formula: ball = 2 + 2 * (0.5 - p) — o'rtacha 1.0
+        questionScores[key] = Math.max(0.3, Math.min(3.0, 2.0 * (1 - p)));
+      }
+    }
+
+    // Har bir ishtirokchi uchun yakuniy natija
     const finalResults = [];
     for (const r of results) {
       const answers = r.answers as Record<string, any>;
       const correctCount = Object.values(answers).filter((a: any) => a.correct).length;
       const totalQuestions = Object.keys(answers).length;
 
-      // Milliy Sertifikat baholash
+      // RASCH ball hisoblash
       let rawScore = 0;
+      let maxPossibleScore = 0;
       for (const [key, val] of Object.entries(answers)) {
+        const qScore = questionScores[key] || 1.0;
+        maxPossibleScore += qScore;
         if ((val as any).correct) {
-          const num = parseInt(key.split('.')[0]);
-          if (num >= 1 && num <= 32) rawScore += 1.0;
-          else if (num >= 33 && num <= 35) rawScore += 2.0;
-          else if (num >= 36 && num <= 45) rawScore += 2.5;
+          rawScore += qScore;
         }
       }
 
-      const scaledScore = Math.round((rawScore / 88.0) * 100 * 100) / 100;
+      // Standart ball (0-100)
+      const scaledScore = maxPossibleScore > 0
+        ? Math.round((rawScore / maxPossibleScore) * 100 * 100) / 100
+        : 0;
+
       const percentage = Math.round((correctCount / Math.max(totalQuestions, 1)) * 100 * 10) / 10;
 
       let grade = 'F';
@@ -356,7 +405,7 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
         data: {
           score: correctCount,
           total: totalQuestions,
-          rawScore,
+          rawScore: Math.round(rawScore * 100) / 100,
           scaledScore,
           percentage,
           grade,
