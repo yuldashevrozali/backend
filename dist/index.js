@@ -269,6 +269,45 @@ app.post('/api/tests/:testCode/answer', verifyTelegramInitData, async (req, res)
         res.status(400).json({ error: e.message });
     }
 });
+// ✅ Testni yakunlash (foydalanuvchi javoblarini saqlash)
+app.post('/api/tests/:testCode/submit', verifyTelegramInitData, async (req, res) => {
+    try {
+        const telegramId = req.telegramData.user.id.toString();
+        const testCode = parseInt(req.params.testCode);
+        const { answers } = req.body;
+        const test = await prisma.test.findUnique({ where: { testCode } });
+        if (!test)
+            return res.status(404).json({ error: 'Test topilmadi' });
+        if (test.status === 'finished')
+            return res.status(400).json({ error: 'Test yakunlangan' });
+        // Foydalanuvchi natijasini olish yoki yaratish
+        let result = await prisma.testResult.findFirst({
+            where: { telegramId, testCode }
+        });
+        if (!result) {
+            result = await prisma.testResult.create({
+                data: { telegramId, testCode, theta: 0, answers: answers || {} }
+            });
+        }
+        else {
+            // Javoblarni yangilash
+            result = await prisma.testResult.update({
+                where: { id: result.id },
+                data: { answers: answers || {} }
+            });
+        }
+        // Javoblar sonini hisoblash
+        const answeredCount = Object.keys(answers || {}).length;
+        res.json({
+            success: true,
+            answeredCount,
+            message: 'Javoblar saqlandi. Natijalar test egasi yakunlagandan keyin ma\'lum bo\'ladi.'
+        });
+    }
+    catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
 // ✅ Testni yakunlash (faqat yaratuvchi, kamida 5 kishi, RASCH scoring)
 app.post('/api/tests/:testCode/finalize', async (req, res) => {
     try {
@@ -300,43 +339,44 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
         });
         // Barcha savollarni olish
         const questions = await prisma.question.findMany({ where: { testCode } });
-        // RASCH: Har bir savol uchun to'g'ri javob berish foizini hisoblash
-        // Kam topilgan savol = ko'proq ball, ko'p topilgan = kamroq ball
-        const questionStats = {};
+        // Savollarni key orqali tez topish uchun map
+        const questionMap = {};
         for (const q of questions) {
             const key = q.part ? `${q.num}.${q.part}` : String(q.num);
+            questionMap[key] = { correctAnswer: q.correctAnswer, difficulty: q.difficulty };
+        }
+        // RASCH: Har bir savol uchun to'g'ri javob berish foizini hisoblash
+        const questionStats = {};
+        for (const [key, q] of Object.entries(questionMap)) {
             questionStats[key] = { total: 0, correct: 0, difficulty: q.difficulty };
         }
         // Har bir ishtirokchi uchun javoblarni tahlil qilish
         for (const r of results) {
             const answers = r.answers;
-            for (const [key, val] of Object.entries(answers)) {
-                if (questionStats[key]) {
+            for (const [key, userAnswer] of Object.entries(answers)) {
+                if (questionStats[key] && questionMap[key]) {
                     questionStats[key].total++;
-                    if (val.correct) {
+                    if (userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
                         questionStats[key].correct++;
                     }
                 }
             }
         }
         // Har bir savol uchun ball hisoblash (RASCH usuli)
-        // p = to'g'ri javob foizi (0-1)
-        // ball = -log(p / (1-p)) — kam topilgan = yuqori ball
         const questionScores = {};
         for (const [key, stats] of Object.entries(questionStats)) {
             if (stats.total === 0) {
-                questionScores[key] = 1.0; // default
+                questionScores[key] = 1.0;
                 continue;
             }
             const p = stats.correct / stats.total;
             if (p <= 0.05) {
-                questionScores[key] = 3.0; // Juda qiyin — maksimal ball
+                questionScores[key] = 3.0;
             }
             else if (p >= 0.95) {
-                questionScores[key] = 0.3; // Juda oson — minimal ball
+                questionScores[key] = 0.3;
             }
             else {
-                // RASCH formula: ball = 2 + 2 * (0.5 - p) — o'rtacha 1.0
                 questionScores[key] = Math.max(0.3, Math.min(3.0, 2.0 * (1 - p)));
             }
         }
@@ -344,15 +384,22 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
         const finalResults = [];
         for (const r of results) {
             const answers = r.answers;
-            const correctCount = Object.values(answers).filter((a) => a.correct).length;
-            const totalQuestions = Object.keys(answers).length;
+            const answeredKeys = Object.keys(answers);
+            const totalQuestions = answeredKeys.length;
+            // To'g'ri javoblar sonini hisoblash
+            let correctCount = 0;
+            for (const [key, userAnswer] of Object.entries(answers)) {
+                if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
+                    correctCount++;
+                }
+            }
             // RASCH ball hisoblash
             let rawScore = 0;
             let maxPossibleScore = 0;
-            for (const [key, val] of Object.entries(answers)) {
+            for (const [key, userAnswer] of Object.entries(answers)) {
                 const qScore = questionScores[key] || 1.0;
                 maxPossibleScore += qScore;
-                if (val.correct) {
+                if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
                     rawScore += qScore;
                 }
             }

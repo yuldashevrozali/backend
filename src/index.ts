@@ -366,21 +366,26 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
     // Barcha savollarni olish
     const questions = await prisma.question.findMany({ where: { testCode } });
 
-    // RASCH: Har bir savol uchun to'g'ri javob berish foizini hisoblash
-    // Kam topilgan savol = ko'proq ball, ko'p topilgan = kamroq ball
-    const questionStats: Record<string, { total: number; correct: number; difficulty: number }> = {};
+    // Savollarni key orqali tez topish uchun map
+    const questionMap: Record<string, { correctAnswer: string; difficulty: number }> = {};
     for (const q of questions) {
       const key = q.part ? `${q.num}.${q.part}` : String(q.num);
+      questionMap[key] = { correctAnswer: q.correctAnswer, difficulty: q.difficulty };
+    }
+
+    // RASCH: Har bir savol uchun to'g'ri javob berish foizini hisoblash
+    const questionStats: Record<string, { total: number; correct: number; difficulty: number }> = {};
+    for (const [key, q] of Object.entries(questionMap)) {
       questionStats[key] = { total: 0, correct: 0, difficulty: q.difficulty };
     }
 
     // Har bir ishtirokchi uchun javoblarni tahlil qilish
     for (const r of results) {
-      const answers = r.answers as Record<string, any>;
-      for (const [key, val] of Object.entries(answers)) {
-        if (questionStats[key]) {
+      const answers = r.answers as Record<string, string>;
+      for (const [key, userAnswer] of Object.entries(answers)) {
+        if (questionStats[key] && questionMap[key]) {
           questionStats[key].total++;
-          if ((val as any).correct) {
+          if (userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
             questionStats[key].correct++;
           }
         }
@@ -388,21 +393,18 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
     }
 
     // Har bir savol uchun ball hisoblash (RASCH usuli)
-    // p = to'g'ri javob foizi (0-1)
-    // ball = -log(p / (1-p)) — kam topilgan = yuqori ball
     const questionScores: Record<string, number> = {};
     for (const [key, stats] of Object.entries(questionStats)) {
       if (stats.total === 0) {
-        questionScores[key] = 1.0; // default
+        questionScores[key] = 1.0;
         continue;
       }
       const p = stats.correct / stats.total;
       if (p <= 0.05) {
-        questionScores[key] = 3.0; // Juda qiyin — maksimal ball
+        questionScores[key] = 3.0;
       } else if (p >= 0.95) {
-        questionScores[key] = 0.3; // Juda oson — minimal ball
+        questionScores[key] = 0.3;
       } else {
-        // RASCH formula: ball = 2 + 2 * (0.5 - p) — o'rtacha 1.0
         questionScores[key] = Math.max(0.3, Math.min(3.0, 2.0 * (1 - p)));
       }
     }
@@ -410,17 +412,25 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
     // Har bir ishtirokchi uchun yakuniy natija
     const finalResults = [];
     for (const r of results) {
-      const answers = r.answers as Record<string, any>;
-      const correctCount = Object.values(answers).filter((a: any) => a.correct).length;
-      const totalQuestions = Object.keys(answers).length;
+      const answers = r.answers as Record<string, string>;
+      const answeredKeys = Object.keys(answers);
+      const totalQuestions = answeredKeys.length;
+
+      // To'g'ri javoblar sonini hisoblash
+      let correctCount = 0;
+      for (const [key, userAnswer] of Object.entries(answers)) {
+        if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
+          correctCount++;
+        }
+      }
 
       // RASCH ball hisoblash
       let rawScore = 0;
       let maxPossibleScore = 0;
-      for (const [key, val] of Object.entries(answers)) {
+      for (const [key, userAnswer] of Object.entries(answers)) {
         const qScore = questionScores[key] || 1.0;
         maxPossibleScore += qScore;
-        if ((val as any).correct) {
+        if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
           rawScore += qScore;
         }
       }
