@@ -332,11 +332,19 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
             where: { testCode },
             data: { status: 'finished' }
         });
-        // Barcha natijalarni olish
+        // Barcha natijalarni olish (faqat user bog'langanlarini)
         const results = await prisma.testResult.findMany({
             where: { testCode },
-            include: { user: true }
         });
+        // User ma'lumotlarini alohida olish
+        const telegramIds = results.map(r => r.telegramId);
+        const users = await prisma.user.findMany({
+            where: { telegramId: { in: telegramIds } }
+        });
+        const userMap = {};
+        for (const u of users) {
+            userMap[u.telegramId] = { name: u.name, surname: u.surname };
+        }
         // Barcha savollarni olish
         const questions = await prisma.question.findMany({ where: { testCode } });
         // Savollarni key orqali tez topish uchun map
@@ -445,8 +453,8 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
                 }
             });
             finalResults.push({
-                name: r.user.name,
-                surname: r.user.surname,
+                name: userMap[r.telegramId]?.name || 'Noma\'lum',
+                surname: userMap[r.telegramId]?.surname || '',
                 theta: Math.round(r.theta * 100) / 100,
                 score: correctCount,
                 total: totalQuestions,
