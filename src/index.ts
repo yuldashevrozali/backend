@@ -137,6 +137,23 @@ app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
   }
 });
 
+// ✅ Testni tekshirish (mavjudligini tekshirish)
+app.get('/api/tests/:testCode', async (req, res) => {
+  try {
+    const testCode = parseInt(req.params.testCode);
+    const test = await prisma.test.findUnique({ where: { testCode } });
+    if (!test) return res.status(404).json({ error: 'Test topilmadi' });
+    if (test.status === 'finished') return res.status(400).json({ error: 'Test yakunlangan' });
+    
+    // Savollar sonini olish
+    const questionCount = await prisma.question.count({ where: { testCode } });
+    
+    res.json({ success: true, testCode, title: test.title, questionCount, status: test.status });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 // ✅ Testni boshlash - birinchi savolni qaytaradi (theta = 0)
 app.post('/api/tests/:testCode/start', verifyTelegramInitData, async (req, res) => {
   try {
