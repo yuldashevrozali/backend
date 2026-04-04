@@ -227,5 +227,57 @@ app.get('/api/results', verifyTelegramInitData, async (req, res) => {
   }
 });
 
+// ✅ Admin: Statistika
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const totalUsers = await prisma.user.count();
+    const totalTests = await prisma.test.count();
+    res.json({ totalUsers, totalTests });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+// ✅ Admin: Reklama yuborish (barcha userlarga)
+app.post('/api/admin/broadcast', async (req, res) => {
+  try {
+    const { message, adminId } = req.body;
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+    
+    if (!BOT_TOKEN) {
+      return res.status(400).json({ error: 'BOT_TOKEN not configured' });
+    }
+
+    // Barcha userlarni olish
+    const users = await prisma.user.findMany({
+      select: { telegramId: true }
+    });
+
+    let sent = 0;
+    for (const user of users) {
+      try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: parseInt(user.telegramId),
+            text: message,
+            parse_mode: 'HTML'
+          })
+        });
+        sent++;
+        // Rate limiting - har bir xabar orasida 50ms kutish
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch {
+        // User botni bloklagan yoki boshqa xato
+      }
+    }
+
+    res.json({ success: true, sent });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
