@@ -288,6 +288,47 @@ app.post('/api/tests/:testCode/answer', verifyTelegramInitData, async (req, res)
   }
 });
 
+// ✅ Testni yakunlash (foydalanuvchi javoblarini saqlash)
+app.post('/api/tests/:testCode/submit', verifyTelegramInitData, async (req, res) => {
+  try {
+    const telegramId = (req as any).telegramData.user.id.toString();
+    const testCode = parseInt(req.params.testCode);
+    const { answers } = req.body;
+
+    const test = await prisma.test.findUnique({ where: { testCode } });
+    if (!test) return res.status(404).json({ error: 'Test topilmadi' });
+    if (test.status === 'finished') return res.status(400).json({ error: 'Test yakunlangan' });
+
+    // Foydalanuvchi natijasini olish yoki yaratish
+    let result = await prisma.testResult.findFirst({
+      where: { telegramId, testCode }
+    });
+
+    if (!result) {
+      result = await prisma.testResult.create({
+        data: { telegramId, testCode, theta: 0, answers: answers || {} }
+      });
+    } else {
+      // Javoblarni yangilash
+      result = await prisma.testResult.update({
+        where: { id: result.id },
+        data: { answers: answers || {} }
+      });
+    }
+
+    // Javoblar sonini hisoblash
+    const answeredCount = Object.keys(answers || {}).length;
+
+    res.json({
+      success: true,
+      answeredCount,
+      message: 'Javoblar saqlandi. Natijalar test egasi yakunlagandan keyin ma\'lum bo\'ladi.'
+    });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 // ✅ Testni yakunlash (faqat yaratuvchi, kamida 5 kishi, RASCH scoring)
 app.post('/api/tests/:testCode/finalize', async (req, res) => {
   try {
