@@ -59,7 +59,7 @@ app.get('/api/check-user/:telegramId', async (req, res) => {
 app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
     try {
         const telegramId = req.telegramData.user.id.toString();
-        const { answerKeys } = req.body;
+        const { answerKeys, testType } = req.body;
         if (!answerKeys || typeof answerKeys !== 'object') {
             return res.status(400).json({ error: 'Javob kalitlari kiritilmagan' });
         }
@@ -73,6 +73,7 @@ app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
                 testCode: newTestCode,
                 title: `Test #${newTestCode}`,
                 telegramId,
+                testType: testType || 'rasch',
                 status: 'active',
             }
         });
@@ -99,10 +100,12 @@ app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
             });
             questions.push(question);
         }
+        // Test turi nomi
+        const testTypeLabel = testType === 'simple' ? '📊 Oddiy test' : '🧠 RASCH modeli';
         // Bot orqali xabar yuborish
         const BOT_TOKEN = process.env.BOT_TOKEN;
         if (BOT_TOKEN) {
-            const message = `✅ <b>Test yaratildi!</b>\n\n📋 Test kodi: <b>${newTestCode}</b>\n👤 Yaratuvchi: ${user?.name || 'Noma\'lum'}\n📝 Savollar soni: ${questions.length}\n\nBoshqalar ham shu kod orqali testni ishlashi mumkin.`;
+            const message = `✅ <b>Test yaratildi!</b>\n\n📋 Test kodi: <b>${newTestCode}</b>\n📌 Test turi: ${testTypeLabel}\n👤 Yaratuvchi: ${user?.name || 'Noma\'lum'}\n📝 Savollar soni: ${questions.length}\n\nBoshqalar ham shu kod orqali testni ishlashi mumkin.`;
             try {
                 await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
                     method: 'POST',
@@ -123,7 +126,7 @@ app.post('/api/tests/create', verifyTelegramInitData, async (req, res) => {
                 console.error('Bot xabar yuborish xatosi:', err);
             }
         }
-        res.json({ success: true, testCode: newTestCode, authorName: user?.name, questionCount: questions.length });
+        res.json({ success: true, testCode: newTestCode, authorName: user?.name, questionCount: questions.length, testType });
     }
     catch (e) {
         res.status(400).json({ error: e.message });
@@ -388,6 +391,8 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
                 questionScores[key] = Math.max(0.3, Math.min(3.0, 2.0 * (1 - p)));
             }
         }
+        // Test turiga qarab natijalarni hisoblash
+        const isSimpleTest = test.testType === 'simple';
         // Har bir ishtirokchi uchun yakuniy natija
         const finalResults = [];
         for (const r of results) {
@@ -401,21 +406,32 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
                     correctCount++;
                 }
             }
-            // RASCH ball hisoblash
-            let rawScore = 0;
-            let maxPossibleScore = 0;
-            for (const [key, userAnswer] of Object.entries(answers)) {
-                const qScore = questionScores[key] || 1.0;
-                maxPossibleScore += qScore;
-                if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
-                    rawScore += qScore;
-                }
+            let scaledScore;
+            let percentage;
+            if (isSimpleTest) {
+                // Oddiy test: faqat to'g'ri javoblar foizi
+                scaledScore = totalQuestions > 0
+                    ? Math.round((correctCount / totalQuestions) * 100 * 100) / 100
+                    : 0;
+                percentage = scaledScore;
             }
-            // Standart ball (0-100)
-            const scaledScore = maxPossibleScore > 0
-                ? Math.round((rawScore / maxPossibleScore) * 100 * 100) / 100
-                : 0;
-            const percentage = Math.round((correctCount / Math.max(totalQuestions, 1)) * 100 * 10) / 10;
+            else {
+                // RASCH ball hisoblash
+                let rawScore = 0;
+                let maxPossibleScore = 0;
+                for (const [key, userAnswer] of Object.entries(answers)) {
+                    const qScore = questionScores[key] || 1.0;
+                    maxPossibleScore += qScore;
+                    if (questionMap[key] && userAnswer.toUpperCase() === questionMap[key].correctAnswer.toUpperCase()) {
+                        rawScore += qScore;
+                    }
+                }
+                // Standart ball (0-100)
+                scaledScore = maxPossibleScore > 0
+                    ? Math.round((rawScore / maxPossibleScore) * 100 * 100) / 100
+                    : 0;
+                percentage = Math.round((correctCount / Math.max(totalQuestions, 1)) * 100 * 10) / 10;
+            }
             let grade = 'F';
             let isCertified = false;
             if (scaledScore >= 90) {
@@ -445,7 +461,7 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
                 data: {
                     score: correctCount,
                     total: totalQuestions,
-                    rawScore: Math.round(rawScore * 100) / 100,
+                    rawScore: isSimpleTest ? correctCount : Math.round((scaledScore / 100) * 88 * 100) / 100,
                     scaledScore,
                     percentage,
                     grade,
