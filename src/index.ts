@@ -249,7 +249,7 @@ app.get('/api/tests/:testCode', async (req, res) => {
     // Savollar sonini olish
     const questionCount = await prisma.question.count({ where: { testCode } });
     
-    res.json({ success: true, testCode, title: test.title, questionCount, status: test.status });
+    res.json({ success: true, testCode, title: test.title, questionCount, status: test.status, testType: test.testType });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
