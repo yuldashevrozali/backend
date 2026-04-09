@@ -4,9 +4,84 @@ import { PrismaClient } from '@prisma/client';
 import { verifyTelegramInitData } from './middleware/telegramAuth.js';
 import { updateTheta, calculateProbability } from './services/rasch.js';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
+import FormData from 'form-data';
 
 dotenv.config();
 export const prisma = new PrismaClient();
+
+// PDF yaratish funksiyasi
+function createResultsPDF(testCode: number, results: any[], participantCount: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const filePath = path.join(process.cwd(), `test_${testCode}_results.pdf`);
+    const doc = new PDFDocument({ margin: 50 });
+    const stream = fs.createWriteStream(filePath);
+
+    doc.pipe(stream);
+
+    // Sarlavha
+    doc.fontSize(24).font('Helvetica-Bold').text(`Test #${testCode} Natijalari`, { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(14).font('Helvetica').text(`Ishtirokchilar: ${participantCount} ta`, { align: 'center' });
+    doc.moveDown(1);
+    doc.fontSize(10).text(`Sana: ${new Date().toLocaleDateString('uz-UZ')}`, { align: 'center' });
+    doc.moveDown(1);
+
+    // Jadval sarlavhasi
+    doc.fontSize(12).font('Helvetica-Bold');
+    const colWidths = [40, 180, 70, 70, 70, 80];
+    let y = doc.y;
+
+    // Header
+    doc.rect(50, y, 510, 25).fill('#4F46E5');
+    doc.fillColor('white');
+    doc.text('O\'rin', 55, y + 7, { width: colWidths[0] });
+    doc.text('Ism Familiya', 55 + colWidths[0], y + 7, { width: colWidths[1] });
+    doc.text('Ball', 55 + colWidths[0] + colWidths[1], y + 7, { width: colWidths[2] });
+    doc.text('Foiz', 55 + colWidths[0] + colWidths[1] + colWidths[2], y + 7, { width: colWidths[3] });
+    doc.text('Daraja', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], y + 7, { width: colWidths[4] });
+    doc.text('Sertifikat', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], y + 7, { width: colWidths[5] });
+
+    y += 30;
+    doc.fillColor('black');
+
+    // Natijalar
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const bgColor = i % 2 === 0 ? '#F9FAFB' : '#FFFFFF';
+
+      doc.rect(50, y, 510, 22).fill(bgColor);
+      doc.fillColor('black').font('Helvetica');
+
+      const rank = i === 0 ? '🥇 1' : i === 1 ? '🥈 2' : i === 2 ? '🥉 3' : `   ${i + 1}`;
+      doc.text(rank, 55, y + 5, { width: colWidths[0] });
+      doc.text(`${r.name} ${r.surname}`, 55 + colWidths[0], y + 5, { width: colWidths[1] });
+      doc.text(String(r.scaledScore), 55 + colWidths[0] + colWidths[1], y + 5, { width: colWidths[2] });
+      doc.text(`${r.percentage}%`, 55 + colWidths[0] + colWidths[1] + colWidths[2], y + 5, { width: colWidths[3] });
+      doc.text(r.grade || 'F', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], y + 5, { width: colWidths[4] });
+      doc.text(r.isCertified ? '✅ Ha' : '❌ Yo\'q', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], y + 5, { width: colWidths[5] });
+
+      y += 24;
+
+      // Yangi sahifa kerak bo'lsa
+      if (y > 750) {
+        doc.addPage();
+        y = 50;
+      }
+    }
+
+    // Footer
+    doc.moveDown(2);
+    doc.fontSize(10).font('Helvetica-Oblique').text('Milliy Sertifikat Test Tizimi', { align: 'center' });
+
+    doc.end();
+    stream.on('finish', () => resolve(filePath));
+    stream.on('error', reject);
+  });
+}
 const app = express();
 
 // ✅ CORS
@@ -530,6 +605,35 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
     finalResults.sort((a, b) => b.scaledScore - a.scaledScore);
 
     res.json({ success: true, results: finalResults, participantCount });
+
+    // Send message to creator
+    try {
+      const botToken = process.env.BOT_TOKEN;
+      const message = `📊 Test #${testCode} yakunlandi!\n👥 Ishtirokchilar: ${participantCount} ta\n\n📄 PDF tayyorlanmoqda...`;
+      await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        chat_id: adminTelegramId,
+        text: message
+      });
+
+      const pdfPath = await createResultsPDF(testCode, finalResults, participantCount);
+
+      const formData = new FormData();
+      formData.append('chat_id', adminTelegramId);
+      formData.append('document', fs.createReadStream(pdfPath), `Test_${testCode}_Natijalari.pdf`);
+      formData.append('caption', `📊 <b>Test #${testCode} Natijalari</b>\n\n👥 Ishtirokchilar: <b>${participantCount}</b> ta\n📅 Sana: ${new Date().toLocaleDateString('uz-UZ')}\n\n<b>🏆 Top 3:</b>\n${finalResults.slice(0, 3).map((r: any, i: number) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+        return `${medal} ${r.name} ${r.surname} — ${r.scaledScore} ball (${r.grade})`;
+      }).join('\n')}`);
+      formData.append('parse_mode', 'HTML');
+
+      await axios.post(`https://api.telegram.org/bot${botToken}/sendDocument`, formData, {
+        headers: formData.getHeaders()
+      });
+
+      fs.unlinkSync(pdfPath);
+    } catch (telegramError) {
+      console.error('Telegram send error:', telegramError);
+    }
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
