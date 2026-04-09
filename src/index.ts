@@ -46,6 +46,28 @@ app.get('/api/me', verifyTelegramInitData, async (req, res) => {
   }
 });
 
+// ✅ Foydalanuvchi yaratgan testlarini olish
+app.get('/api/my-created-tests', verifyTelegramInitData, async (req, res) => {
+  try {
+    const telegramId = (req as any).telegramData.user.id.toString();
+    const tests = await prisma.test.findMany({
+      where: { telegramId, status: 'active' },
+      include: {
+        _count: { select: { testResults: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(tests.map(t => ({
+      testCode: t.testCode,
+      title: t.title,
+      createdAt: t.createdAt,
+      participantCount: t._count.testResults
+    })));
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 // ✅ User ro'yxatdan o'tganini tekshirish
 app.get('/api/check-user/:telegramId', async (req, res) => {
   try {
