@@ -59,9 +59,9 @@ function createResultsPDF(testCode: number, results: any[], participantCount: nu
       const rank = i === 0 ? '🥇 1' : i === 1 ? '🥈 2' : i === 2 ? '🥉 3' : `   ${i + 1}`;
       doc.text(rank, 55, y + 5, { width: colWidths[0] });
       doc.text(`${r.name} ${r.surname}`, 55 + colWidths[0], y + 5, { width: colWidths[1] });
-      doc.text(String(r.scaledScore), 55 + colWidths[0] + colWidths[1], y + 5, { width: colWidths[2] });
+      doc.text(String(r.isSimpleTest ? r.score : r.scaledScore), 55 + colWidths[0] + colWidths[1], y + 5, { width: colWidths[2] });
       doc.text(`${r.percentage}%`, 55 + colWidths[0] + colWidths[1] + colWidths[2], y + 5, { width: colWidths[3] });
-      doc.text(r.grade || 'F', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], y + 5, { width: colWidths[4] });
+      doc.text(r.grade || '', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], y + 5, { width: colWidths[4] });
       doc.text(r.isCertified ? '✅ Ha' : '❌ Yo\'q', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], y + 5, { width: colWidths[5] });
 
       y += 24;
@@ -539,13 +539,18 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
 
       let scaledScore: number;
       let percentage: number;
+      let grade: string;
+      let isCertified: boolean;
 
       if (isSimpleTest) {
-        // Oddiy test: faqat to'g'ri javoblar foizi
+        // Oddiy test: ball to'g'ri javoblar soni, foiz hisoblanadi
         scaledScore = totalQuestions > 0
           ? Math.round((correctCount / totalQuestions) * 100 * 100) / 100
           : 0;
         percentage = scaledScore;
+        // Oddiy testda daraja foizga asoslanmasin
+        grade = '';
+        isCertified = percentage >= 70; // oddiy testda 70% dan yuqori sertifikat
       } else {
         // RASCH ball hisoblash
         let rawScore = 0;
@@ -564,16 +569,16 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
           : 0;
 
         percentage = Math.round((correctCount / Math.max(totalQuestions, 1)) * 100 * 10) / 10;
-      }
 
-      let grade = 'F';
-      let isCertified = false;
-      if (scaledScore >= 90) { grade = 'A+'; isCertified = true; }
-      else if (scaledScore >= 80) { grade = 'A'; isCertified = true; }
-      else if (scaledScore >= 70) { grade = 'B+'; isCertified = true; }
-      else if (scaledScore >= 60) { grade = 'B'; isCertified = true; }
-      else if (scaledScore >= 50) { grade = 'C+'; }
-      else if (scaledScore >= 40) { grade = 'C'; }
+        grade = 'F';
+        isCertified = false;
+        if (scaledScore >= 90) { grade = 'A+'; isCertified = true; }
+        else if (scaledScore >= 80) { grade = 'A'; isCertified = true; }
+        else if (scaledScore >= 70) { grade = 'B+'; isCertified = true; }
+        else if (scaledScore >= 60) { grade = 'B'; isCertified = true; }
+        else if (scaledScore >= 50) { grade = 'C+'; }
+        else if (scaledScore >= 40) { grade = 'C'; }
+      }
 
       await prisma.testResult.update({
         where: { id: r.id },
@@ -598,6 +603,7 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
         percentage,
         grade,
         isCertified,
+        isSimpleTest,
       });
     }
 
@@ -622,7 +628,8 @@ app.post('/api/tests/:testCode/finalize', async (req, res) => {
       formData.append('document', fs.createReadStream(pdfPath), `Test_${testCode}_Natijalari.pdf`);
       formData.append('caption', `📊 <b>Test #${testCode} Natijalari</b>\n\n👥 Ishtirokchilar: <b>${participantCount}</b> ta\n📅 Sana: ${new Date().toLocaleDateString('uz-UZ')}\n\n<b>🏆 Top 3:</b>\n${finalResults.slice(0, 3).map((r: any, i: number) => {
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
-        return `${medal} ${r.name} ${r.surname} — ${r.scaledScore} ball (${r.grade})`;
+        const ballDisplay = r.isSimpleTest ? `${r.score} tog'ri (${r.percentage}%)` : `${r.scaledScore} ball (${r.grade})`;
+        return `${medal} ${r.name} ${r.surname} — ${ballDisplay}`;
       }).join('\n')}`);
       formData.append('parse_mode', 'HTML');
 
